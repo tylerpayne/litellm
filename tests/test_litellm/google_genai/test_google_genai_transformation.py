@@ -447,3 +447,490 @@ def test_validate_environment_with_extra_headers():
     assert "X-Custom-Header" in result, "Extra headers should be merged"
     assert result["X-Custom-Header"] == "custom-value"
     assert "Content-Type" in result
+
+
+# =============================================================================
+# tool_choice transformation tests
+# =============================================================================
+
+
+def test_map_generate_content_optional_params_tool_choice_required():
+    """Test that tool_choice='required' is stored for later transformation"""
+    config = GoogleGenAIConfig()
+
+    generate_content_config_dict = {
+        "tool_choice": "required",
+        "temperature": 1.0
+    }
+
+    result = config.map_generate_content_optional_params(
+        generate_content_config_dict=generate_content_config_dict,
+        model="gemini/gemini-2.5-flash"
+    )
+
+    assert "_litellm_tool_choice" in result
+    assert result["_litellm_tool_choice"] == "required"
+    assert "temperature" in result
+    assert result["temperature"] == 1.0
+
+
+def test_map_generate_content_optional_params_tool_choice_auto():
+    """Test that tool_choice='auto' is stored for later transformation"""
+    config = GoogleGenAIConfig()
+
+    generate_content_config_dict = {
+        "tool_choice": "auto",
+        "temperature": 0.7
+    }
+
+    result = config.map_generate_content_optional_params(
+        generate_content_config_dict=generate_content_config_dict,
+        model="gemini/gemini-2.5-flash"
+    )
+
+    assert "_litellm_tool_choice" in result
+    assert result["_litellm_tool_choice"] == "auto"
+    assert "temperature" in result
+
+
+def test_map_generate_content_optional_params_tool_choice_none():
+    """Test that tool_choice='none' is stored for later transformation"""
+    config = GoogleGenAIConfig()
+
+    generate_content_config_dict = {
+        "tool_choice": "none",
+        "temperature": 0.5
+    }
+
+    result = config.map_generate_content_optional_params(
+        generate_content_config_dict=generate_content_config_dict,
+        model="gemini/gemini-2.5-flash"
+    )
+
+    assert "_litellm_tool_choice" in result
+    assert result["_litellm_tool_choice"] == "none"
+    assert "temperature" in result
+
+
+def test_map_generate_content_optional_params_tool_choice_dict():
+    """Test that tool_choice with specific function dict is stored for later transformation"""
+    config = GoogleGenAIConfig()
+
+    generate_content_config_dict = {
+        "tool_choice": {"function": {"name": "get_weather"}},
+        "temperature": 1.0
+    }
+
+    result = config.map_generate_content_optional_params(
+        generate_content_config_dict=generate_content_config_dict,
+        model="gemini/gemini-2.5-flash"
+    )
+
+    assert "_litellm_tool_choice" in result
+    assert result["_litellm_tool_choice"] == {"function": {"name": "get_weather"}}
+
+
+def test_transform_generate_content_request_tool_choice_required():
+    """Test that tool_choice='required' is transformed to toolConfig with mode='ANY'"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "What's the weather?"}]}]
+    generate_content_config_dict = {
+        "_litellm_tool_choice": "required",
+        "temperature": 1.0
+    }
+
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=generate_content_config_dict,
+    )
+
+    assert "toolConfig" in result, "toolConfig should be in request"
+    assert result["toolConfig"]["functionCallingConfig"]["mode"] == "ANY"
+    # Verify _litellm_tool_choice is not in generationConfig
+    assert "_litellm_tool_choice" not in result.get("generationConfig", {})
+
+
+def test_transform_generate_content_request_tool_choice_auto():
+    """Test that tool_choice='auto' is transformed to toolConfig with mode='AUTO'"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "What's the weather?"}]}]
+    generate_content_config_dict = {
+        "_litellm_tool_choice": "auto",
+        "temperature": 1.0
+    }
+
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=generate_content_config_dict,
+    )
+
+    assert "toolConfig" in result, "toolConfig should be in request"
+    assert result["toolConfig"]["functionCallingConfig"]["mode"] == "AUTO"
+
+
+def test_transform_generate_content_request_tool_choice_none():
+    """Test that tool_choice='none' is transformed to toolConfig with mode='NONE'"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "What's the weather?"}]}]
+    generate_content_config_dict = {
+        "_litellm_tool_choice": "none",
+        "temperature": 1.0
+    }
+
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=generate_content_config_dict,
+    )
+
+    assert "toolConfig" in result, "toolConfig should be in request"
+    assert result["toolConfig"]["functionCallingConfig"]["mode"] == "NONE"
+
+
+def test_transform_generate_content_request_tool_choice_specific_function():
+    """Test that tool_choice with specific function is transformed correctly"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "What's the weather?"}]}]
+    generate_content_config_dict = {
+        "_litellm_tool_choice": {"function": {"name": "get_weather"}},
+        "temperature": 1.0
+    }
+
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=generate_content_config_dict,
+    )
+
+    assert "toolConfig" in result, "toolConfig should be in request"
+    assert result["toolConfig"]["functionCallingConfig"]["mode"] == "ANY"
+    assert result["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"] == ["get_weather"]
+
+
+def test_transform_generate_content_request_tool_choice_with_tools():
+    """Test that tool_choice works correctly alongside tools parameter"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "What's the weather?"}]}]
+    tools = [
+        {
+            "functionDeclarations": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather information",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}}
+                    }
+                }
+            ]
+        }
+    ]
+    generate_content_config_dict = {
+        "_litellm_tool_choice": "required",
+        "temperature": 0.7
+    }
+
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=tools,
+        generate_content_config_dict=generate_content_config_dict,
+    )
+
+    # Both tools and toolConfig should be present
+    assert "tools" in result, "tools should be in request"
+    assert result["tools"] == tools
+    assert "toolConfig" in result, "toolConfig should be in request"
+    assert result["toolConfig"]["functionCallingConfig"]["mode"] == "ANY"
+
+
+def test_transform_generate_content_request_no_tool_choice():
+    """Test that no toolConfig is added when tool_choice is not provided"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
+    generate_content_config_dict = {
+        "temperature": 1.0
+    }
+
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=generate_content_config_dict,
+    )
+
+    assert "toolConfig" not in result, "toolConfig should not be in request when tool_choice not provided"
+
+
+def test_map_tool_choice_to_tool_config_invalid():
+    """Test that invalid tool_choice value returns empty dict"""
+    config = GoogleGenAIConfig()
+
+    # Test with invalid string value
+    result = config._map_tool_choice_to_tool_config("invalid_value")
+    assert result == {}, "Invalid tool_choice should return empty dict"
+
+    # Test with invalid dict (missing function key)
+    result = config._map_tool_choice_to_tool_config({"invalid": "value"})
+    assert result == {} or result["functionCallingConfig"]["allowedFunctionNames"] == [], \
+        "Invalid dict should return empty dict or empty allowedFunctionNames"
+
+
+def test_transform_generate_content_request_tool_choice_dict_not_mutated():
+    """Test that the original generate_content_config_dict is not mutated"""
+    config = GoogleGenAIConfig()
+
+    contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
+    original_config = {
+        "_litellm_tool_choice": "required",
+        "temperature": 1.0
+    }
+    # Make a copy to compare later
+    config_copy = dict(original_config)
+
+    config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=original_config,
+    )
+
+    # Original dict should not be mutated
+    assert original_config == config_copy, "Original config dict should not be mutated"
+
+
+def test_end_to_end_tool_choice_transformation():
+    """Test the full flow: map_generate_content_optional_params -> transform_generate_content_request"""
+    config = GoogleGenAIConfig()
+
+    # Step 1: User provides tool_choice in config
+    user_config = {
+        "tool_choice": "required",
+        "temperature": 0.8
+    }
+
+    # Step 2: map_generate_content_optional_params processes it
+    mapped_config = config.map_generate_content_optional_params(
+        generate_content_config_dict=user_config,
+        model="gemini/gemini-2.5-flash"
+    )
+
+    assert "_litellm_tool_choice" in mapped_config
+
+    # Step 3: transform_generate_content_request builds the final request
+    contents = [{"role": "user", "parts": [{"text": "Test"}]}]
+    result = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,
+        tools=None,
+        generate_content_config_dict=mapped_config,
+    )
+
+    # Final request should have toolConfig at top level with correct mode
+    assert "toolConfig" in result
+    assert result["toolConfig"]["functionCallingConfig"]["mode"] == "ANY"
+    # generationConfig should have temperature but not _litellm_tool_choice
+    assert "temperature" in result["generationConfig"]
+    assert "_litellm_tool_choice" not in result["generationConfig"]
+
+
+def test_consecutive_tool_calls_with_tool_choice():
+    """
+    Test that consecutive tool calls work correctly with tool_choice.
+
+    Simulates a conversation flow:
+    1. User asks a question
+    2. Model makes a tool call (get_weather)
+    3. Tool response is added to conversation
+    4. Model makes another tool call (get_forecast)
+
+    This ensures tool_choice is correctly applied across multiple turns.
+    """
+    config = GoogleGenAIConfig()
+
+    # Conversation history with tool call and tool response
+    contents = [
+        # Initial user message
+        {"role": "user", "parts": [{"text": "What's the weather in NYC and the forecast for tomorrow?"}]},
+        # Model's first tool call
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "get_weather",
+                        "args": {"location": "NYC"}
+                    }
+                }
+            ]
+        },
+        # Tool response
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "get_weather",
+                        "response": {"temperature": 72, "condition": "sunny"}
+                    }
+                }
+            ]
+        },
+    ]
+
+    tools = [
+        {
+            "functionDeclarations": [
+                {
+                    "name": "get_weather",
+                    "description": "Get current weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}}
+                    }
+                },
+                {
+                    "name": "get_forecast",
+                    "description": "Get weather forecast",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {"type": "string"},
+                            "days": {"type": "integer"}
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+
+    # First request - should work with tool_choice required
+    generate_content_config_dict_1 = {
+        "_litellm_tool_choice": "required",
+        "temperature": 0.7
+    }
+
+    result_1 = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents[:1],  # Just the first user message
+        tools=tools,
+        generate_content_config_dict=generate_content_config_dict_1,
+    )
+
+    assert "toolConfig" in result_1
+    assert result_1["toolConfig"]["functionCallingConfig"]["mode"] == "ANY"
+    assert "tools" in result_1
+    assert len(result_1["contents"]) == 1
+
+    # Second request - with full conversation history including tool call and response
+    generate_content_config_dict_2 = {
+        "_litellm_tool_choice": "required",
+        "temperature": 0.7
+    }
+
+    result_2 = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents,  # Full conversation with tool call and response
+        tools=tools,
+        generate_content_config_dict=generate_content_config_dict_2,
+    )
+
+    # Verify the second request is properly formed
+    assert "toolConfig" in result_2
+    assert result_2["toolConfig"]["functionCallingConfig"]["mode"] == "ANY"
+    assert "tools" in result_2
+    assert len(result_2["contents"]) == 3  # user, model (tool call), user (tool response)
+
+    # Verify the conversation history is preserved correctly
+    assert result_2["contents"][0]["role"] == "user"
+    assert result_2["contents"][1]["role"] == "model"
+    assert "functionCall" in result_2["contents"][1]["parts"][0]
+    assert result_2["contents"][2]["role"] == "user"
+    assert "functionResponse" in result_2["contents"][2]["parts"][0]
+
+    # Verify generationConfig doesn't have _litellm_tool_choice
+    assert "_litellm_tool_choice" not in result_2.get("generationConfig", {})
+
+
+def test_consecutive_tool_calls_config_dict_reused():
+    """
+    Test that the same config dict can be reused across multiple consecutive calls.
+
+    This is important because in practice, the same config might be passed to
+    multiple transform calls during a conversation.
+    """
+    config = GoogleGenAIConfig()
+
+    # Shared config dict that will be reused
+    shared_config = {
+        "_litellm_tool_choice": "required",
+        "temperature": 0.8
+    }
+
+    tools = [
+        {
+            "functionDeclarations": [
+                {
+                    "name": "search",
+                    "description": "Search for information",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}
+                }
+            ]
+        }
+    ]
+
+    # First call
+    contents_1 = [{"role": "user", "parts": [{"text": "Search for Python tutorials"}]}]
+    result_1 = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents_1,
+        tools=tools,
+        generate_content_config_dict=shared_config,
+    )
+
+    # Second call with same config dict (simulating consecutive turn)
+    contents_2 = [
+        {"role": "user", "parts": [{"text": "Search for Python tutorials"}]},
+        {"role": "model", "parts": [{"functionCall": {"name": "search", "args": {"query": "Python tutorials"}}}]},
+        {"role": "user", "parts": [{"functionResponse": {"name": "search", "response": {"results": ["tutorial1", "tutorial2"]}}}]},
+    ]
+    result_2 = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents_2,
+        tools=tools,
+        generate_content_config_dict=shared_config,  # Reuse same config
+    )
+
+    # Third call with same config dict
+    contents_3 = contents_2 + [
+        {"role": "model", "parts": [{"text": "I found some tutorials. Want me to search for more?"}]},
+        {"role": "user", "parts": [{"text": "Yes, search for advanced topics"}]},
+    ]
+    result_3 = config.transform_generate_content_request(
+        model="gemini-2.5-flash",
+        contents=contents_3,
+        tools=tools,
+        generate_content_config_dict=shared_config,  # Reuse same config again
+    )
+
+    # All three results should have toolConfig correctly set
+    for i, result in enumerate([result_1, result_2, result_3], 1):
+        assert "toolConfig" in result, f"Call {i}: toolConfig should be present"
+        assert result["toolConfig"]["functionCallingConfig"]["mode"] == "ANY", f"Call {i}: mode should be ANY"
+        assert "_litellm_tool_choice" not in result.get("generationConfig", {}), f"Call {i}: marker should not leak"
+
+    # Verify the shared config was not mutated
+    assert "_litellm_tool_choice" in shared_config, "Original config should still have marker"
+    assert shared_config["_litellm_tool_choice"] == "required"

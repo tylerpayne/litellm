@@ -49,6 +49,41 @@ class GoogleGenAIConfig(BaseGoogleGenAIGenerateContentConfig, VertexLLM):
         super().__init__()
         VertexLLM.__init__(self)
 
+    def _map_tool_choice_to_tool_config(self, tool_choice: Union[str, dict]) -> Dict[str, Any]:
+        """
+        Transform OpenAI-style tool_choice to Google's toolConfig format.
+
+        Mapping:
+            "required" -> mode="ANY" (must call a tool)
+            "auto"     -> mode="AUTO" (model decides)
+            "none"     -> mode="NONE" (no tool calls)
+            {"function": {"name": "..."}} -> mode="ANY" + allowedFunctionNames
+
+        Args:
+            tool_choice: OpenAI-style tool_choice value
+
+        Returns:
+            Google toolConfig dict
+        """
+        if tool_choice == "none":
+            mode = "NONE"
+        elif tool_choice == "required":
+            mode = "ANY"
+        elif tool_choice == "auto":
+            mode = "AUTO"
+        elif isinstance(tool_choice, dict):
+            name = tool_choice.get("function", {}).get("name", "")
+            return {
+                "functionCallingConfig": {
+                    "mode": "ANY",
+                    "allowedFunctionNames": [name] if name else [],
+                }
+            }
+        else:
+            return {}
+
+        return {"functionCallingConfig": {"mode": mode}}
+
     def get_supported_generate_content_optional_params(self, model: str) -> List[str]:
         """
         Get the list of supported Google GenAI parameters for the model.
@@ -81,6 +116,7 @@ class GoogleGenAIConfig(BaseGoogleGenAIGenerateContentConfig, VertexLLM):
             "safety_settings",
             "tools",
             "tool_config",
+            "tool_choice",
             "labels",
             "cached_content",
             "response_modalities",
@@ -125,18 +161,23 @@ class GoogleGenAIConfig(BaseGoogleGenAIGenerateContentConfig, VertexLLM):
             # Check if param (or its variants) is supported
             param_snake = _camel_to_snake(param)
             param_camel = _snake_to_camel(param)
-            
+
             # Check if param is supported in any format
             is_supported = (
                 param in supported_google_genai_params or
                 param_snake in supported_google_genai_params or
                 param_camel in supported_google_genai_params
             )
-            
+
             if is_supported:
-                # Always output in camelCase for Google GenAI API
-                output_key = param_camel if param != param_camel else param
-                _generate_content_config_dict[output_key] = value
+                # Handle tool_choice specially - store it with a marker prefix
+                # so transform_generate_content_request can extract it and add to top-level
+                if param == "tool_choice" or param_snake == "tool_choice":
+                    _generate_content_config_dict["_litellm_tool_choice"] = value
+                else:
+                    # Always output in camelCase for Google GenAI API
+                    output_key = param_camel if param != param_camel else param
+                    _generate_content_config_dict[output_key] = value
         return _generate_content_config_dict
 
     def validate_environment(
@@ -306,17 +347,34 @@ class GoogleGenAIConfig(BaseGoogleGenAIGenerateContentConfig, VertexLLM):
             GenerateContentRequestDict,
         )
 
+        # Extract tool_choice if present (stored with marker prefix)
+        # Use get() instead of pop() to avoid mutating the dict (it may be reused)
+        tool_choice = generate_content_config_dict.get("_litellm_tool_choice")
+
+        # Create a copy without the marker key for generationConfig
+        generation_config = {
+            k: v for k, v in generate_content_config_dict.items()
+            if k != "_litellm_tool_choice"
+        }
+
         typed_generate_content_request = GenerateContentRequestDict(
             model=model,
             contents=contents,
             tools=tools,
-            generationConfig=GenerateContentConfigDict(**generate_content_config_dict),
+            generationConfig=GenerateContentConfigDict(**generation_config),
         )
 
         request_dict = cast(dict, typed_generate_content_request)
-        
+
         if system_instruction is not None:
             request_dict["systemInstruction"] = system_instruction
+
+        # Add toolConfig at top level if tool_choice was specified
+        if tool_choice is not None:
+            tool_config = self._map_tool_choice_to_tool_config(tool_choice)
+            if tool_config:
+                request_dict["toolConfig"] = tool_config
+
         return request_dict
 
     def transform_generate_content_response(
